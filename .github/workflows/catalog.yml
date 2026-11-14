@@ -1,0 +1,71 @@
+# Builds addons.json from addons/ (build.py) and deploys it to this repo's Pages: hourly, so a new
+# release reaches devices within the hour, on every push to main, and by hand. Pull requests run the
+# tests and the build (to check a new entry's recipe) without deploying.
+#
+# GitHub turns off a public repo's scheduled workflows after 60 days with no commits. Its Actions tab
+# then says so, with a button to turn this back on; any commit also resets the 60 days.
+name: Catalog
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: read  # the Pages URL, for the last published index
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test
+        run: python3 -m unittest discover -s tests -v
+      # The last published index, so unchanged entries aren't downloaded again and a recipe that fails
+      # this run keeps its last good data. None on the first run, or if Pages is down: then every entry
+      # is built fresh.
+      - name: Find the published index
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          url=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url 2>/dev/null || true)
+          echo "url=${url:+${url%/}/addons.json}" >> "$GITHUB_OUTPUT"
+      - name: Build
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ steps.previous.outputs.url }}
+        run: |
+          set -euo pipefail
+          python3 build.py --out public ${PREVIOUS:+--previous "$PREVIOUS"}
+          cp index.html public/
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: public
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}addons.json
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

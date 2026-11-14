@@ -1,0 +1,1 @@
+{"name": "TipTac", "recipe": {"type": "github-release", "repo": "frozn/TipTac", "asset": "TipTac-.*-release\\.zip"}}
